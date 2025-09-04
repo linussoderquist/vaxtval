@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="sv">
 <head>
-  <link rel="icon" type="image/png" href="icon.png">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Hitta lämpliga inhemska växtarter (SOS Export)</title>
+  <link rel="icon" href="icon.png" type="image/png" sizes="32x32">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
   <style>
     :root{--bg:#0b0f14;--text:#ecf1f6;--muted:#a5b6c9;--hl:#77aaff}
@@ -25,7 +25,7 @@
     tbody tr{background:#0f1723;border:1px solid #1e2b3b}
     tbody td{padding:8px 10px}
     tr:hover{outline:1px solid #27405f}
-    tr.selected{outline:2px solid gold;background-color:#3b2b00}
+    tr.selected{outline:2px solid gold;background-color:#3b2b00} /* guldgul vald rad */
     .tag{font-size:11px;border:1px solid #2a4462;border-radius:999px;padding:2px 6px;color:#cfe1ff;background:#0e1b2f}
     .hint{font-size:13px;color:var(--muted);margin-top:6px}
   </style>
@@ -34,7 +34,8 @@
   <header>
     <h1>Hitta lämpliga inhemska växtarter</h1>
     <div class="controls">
-      <label>vaxtdata.csv
+      <span id="csvAutoBadge" class="hint" style="display:none;">vaxtdata.csv lästes automatiskt ✅</span>
+      <label id="csvPicker">vaxtdata.csv
         <input type="file" id="csvInput" accept=".csv">
       </label>
       Radie (m): <input type="number" id="radiusInput" value="500" min="10" step="10">
@@ -43,15 +44,17 @@
       </label>
       <label class="chk"><input type="checkbox" id="ignoreCsv"> Ignorera CSV (visa alla)</label>
       <button id="analyzeBtn">Analysera</button>
-      <span id="statusMsg">1) Ladda CSV  2) Klicka i kartan  3) Analysera</span>
+      <span id="statusMsg">1) CSV laddas…  2) Klicka i kartan  3) Analysera</span>
     </div>
-    <div class="hint">CSV: semikolonseparerad (t.ex. Dyntaxa ID number, Scientific name, Svenskt namn, Biodiversitet, Nektar, Växtsätt, Medelhöjd, Ljus, Fukt, Salt). Endast inhemska i din CSV.</div>
+    <div class="hint">För GitHub Pages: lägg <code>index.html</code>, <code>vaxtdata.csv</code> och <code>icon.png</code> i samma mapp.</div>
   </header>
-<div id="progressContainer" style="display:none;position:relative;width:120px;height:120px;margin:20px auto;">
-  <canvas id="progressDonut" width="120" height="120"></canvas>
-  <img src="icon.png" alt="ikon" 
-       style="position:absolute;top:50%;left:50%;width:48px;height:48px;transform:translate(-50%,-50%);">
-</div>
+
+  <!-- Donut-progress med icon.png i mitten -->
+  <div id="progressContainer" style="display:none;position:fixed;z-index:9999;right:16px;bottom:16px;
+    width:120px;height:120px;padding:6px;border-radius:14px;background:rgba(13,20,32,.85);box-shadow:0 8px 24px rgba(0,0,0,.35);">
+    <canvas id="progressDonut" width="120" height="120"></canvas>
+    <img src="icon.png" alt="ikon" style="position:absolute;top:50%;left:50%;width:48px;height:48px;transform:translate(-50%,-50%);pointer-events:none;">
+  </div>
 
   <div id="map"></div>
 
@@ -83,7 +86,7 @@
   const asNumber = x => { const n=parseFloat(String(x??'').replace(',','.')); return Number.isFinite(n)? n : null; };
   const toMetersFromCm = v => { const n=asNumber(v); return n==null? null : n/100; };
 
-  // Normalisera vetenskapligt namn → "genus art" (utan författare, subsp./var., parenteser)
+  // Normalisera vetenskapligt namn → "genus art"
   function normalizeSciName(s) {
     if (!s) return '';
     return String(s)
@@ -95,51 +98,25 @@
       .split(/\s+/).slice(0,2).join(' ')
       .toLowerCase();
   }
-function showProgress(){ 
-  document.getElementById('progressContainer').style.display='block'; 
-  updateProgress(0); 
-}
-function hideProgress(){ 
-  document.getElementById('progressContainer').style.display='none'; 
-}
 
-function updateProgress(frac){
-  const canvas=document.getElementById('progressDonut');
-  const ctx=canvas.getContext('2d');
-  const size=canvas.width;
-  ctx.clearRect(0,0,size,size);
+  // Donut-progress
+  function showProgress(){ $('#progressContainer').style.display='block'; updateProgress(0); }
+  function hideProgress(){ $('#progressContainer').style.display='none'; }
+  function updateProgress(frac){
+    const canvas=$('#progressDonut'); const ctx=canvas.getContext('2d'); const size=canvas.width;
+    ctx.clearRect(0,0,size,size);
+    ctx.beginPath(); ctx.arc(size/2,size/2,size/2-6,0,2*Math.PI); ctx.strokeStyle='#223344'; ctx.lineWidth=12; ctx.stroke();
+    ctx.beginPath(); ctx.arc(size/2,size/2,size/2-6,-Math.PI/2,-Math.PI/2+2*Math.PI*frac); ctx.strokeStyle='#77aaff'; ctx.lineWidth=12; ctx.stroke();
+  }
 
-  // bakgrundring
-  ctx.beginPath();
-  ctx.arc(size/2,size/2, size/2-6, 0, 2*Math.PI);
-  ctx.strokeStyle='#223344';
-  ctx.lineWidth=12;
-  ctx.stroke();
-
-  // progressring
-  ctx.beginPath();
-  ctx.arc(size/2,size/2, size/2-6, -Math.PI/2, -Math.PI/2+2*Math.PI*frac);
-  ctx.strokeStyle='#77aaff';
-  ctx.lineWidth=12;
-  ctx.stroke();
-}
-
-  // Robust semikolon-CSV med citattecken
+  // Semikolon-CSV med citattecken
   function parseCSV(text, delimiter=';'){
     const rows=[]; let i=0, field='', row=[], inQ=false;
     const pushF=()=>{row.push(field); field='';}; const pushR=()=>{rows.push(row); row=[];};
     while(i<text.length){
       const c=text[i];
-      if(inQ){
-        if(c==='"'){ if(text[i+1]==='"'){ field+='"'; i++; } else inQ=false; }
-        else field+=c;
-      }else{
-        if(c==='"') inQ=true;
-        else if(c===delimiter) pushF();
-        else if(c==='\n'){ pushF(); pushR(); }
-        else if(c==='\r'){ /* ignore */ }
-        else field+=c;
-      }
+      if(inQ){ if(c==='"'){ if(text[i+1]==='"'){ field+='"'; i++; } else inQ=false; } else field+=c; }
+      else { if(c==='"') inQ=true; else if(c===delimiter) pushF(); else if(c==='\n'){ pushF(); pushR(); } else if(c!=='\r') field+=c; }
       i++;
     }
     if(field.length>0 || row.length>0){ pushF(); pushR(); }
@@ -173,49 +150,82 @@ function updateProgress(frac){
     bufferCircle = L.circle(selectedPoint, {radius:r, color:'#77f', fillOpacity:0.05}).addTo(map);
   }
 
-  // ===== CSV via filväljare (CORS-fritt) =====
+  // ===== Ladda CSV: auto via fetch på http(s), annars via filväljare =====
+  async function loadCsvTextFromSameFolder(){
+    const url = 'vaxtdata.csv'; // samma mapp
+    const res = await fetch(url, { cache:'no-store' });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    return res.text();
+  }
+
+  async function parseAndIndexCsvText(txt){
+    const rows = parseCSV(txt,';');
+    const head = rows[0].map(h=>String(h).trim().toLowerCase());
+    const idx = {
+      dyntaxa: head.indexOf('dyntaxa id number'),
+      sv: head.indexOf('svenskt namn'),
+      sci: head.indexOf('scientific name'),
+      bio: head.findIndex(h=>h.includes('biodivers')),
+      nec: head.findIndex(h=>h.includes('nektar')),
+      growth: head.findIndex(h=>h.includes('växtsätt')||h.includes('vaxtsätt')||h.includes('vaxtsatt')||h.includes('växtsatt')),
+      height: head.findIndex(h=>h.includes('medelhöjd')),
+      light: head.findIndex(h=>h==='light'||h.includes('ljus')),
+      moist: head.findIndex(h=>h==='moisture'||h.includes('fukt')),
+      salt: head.findIndex(h=>h==='salinity'||h.includes('salttålighet')||h.includes('salt'))
+    };
+    if(idx.sci===-1 || idx.sv===-1) throw new Error('Saknar Scientific name / Svenskt namn');
+    speciesCsvById.clear(); speciesByNorm.clear();
+
+    for(let r=1;r<rows.length;r++){
+      const row=rows[r];
+      const dx  = String(row[idx.dyntaxa]||'').trim();
+      const sci = String(row[idx.sci]    ||'').trim();
+      if(!sci) continue;
+      const rec = {
+        dyntaxa: dx,
+        svName: row[idx.sv] || '',
+        sciName: sci,
+        biodiv: idx.bio>=0? asNumber(row[idx.bio]) : null,
+        nectar: idx.nec>=0? asNumber(row[idx.nec]) : null,
+        growth: idx.growth>=0? row[idx.growth] : '',
+        height: idx.height>=0? toMetersFromCm(row[idx.height]) : null,
+        light:  idx.light>=0? row[idx.light]  : '',
+        moist:  idx.moist>=0? row[idx.moist]  : '',
+        salt:   idx.salt>=0?  row[idx.salt]   : ''
+      };
+      if(dx) speciesCsvById.set(dx, rec);
+      speciesByNorm.set(normalizeSciName(sci), rec);
+    }
+    csvLoaded = true;
+  }
+
+  async function tryAutoLoadCsv(){
+    if(location.protocol.startsWith('http')){ // GitHub Pages, localhost etc.
+      try{
+        setStatus('Försöker läsa vaxtdata.csv…');
+        const txt = await loadCsvTextFromSameFolder();
+        await parseAndIndexCsvText(txt);
+        setStatus(`CSV laddad (${speciesByNorm.size} arter) från samma mapp.`);
+        $('#csvAutoBadge').style.display='inline';
+        $('#csvPicker').style.display='none';
+      }catch(err){
+        console.warn('Auto-laddning av CSV misslyckades:', err);
+        setStatus('CSV kunde inte laddas automatiskt – välj fil manuellt.');
+        $('#csvPicker').style.display='inline';
+      }
+    }else{
+      // file:// → måste använda filväljare
+      $('#csvPicker').style.display='inline';
+      setStatus('Välj CSV-fil (p.g.a. fil:// CORS).');
+    }
+  }
+
+  // Filväljare fallback
   $('#csvInput').addEventListener('change', async (e)=>{
     const f = e.target.files?.[0]; if(!f){ setStatus('Ingen CSV vald'); return; }
     const txt = await f.text();
     try{
-      const rows = parseCSV(txt,';');
-      const head = rows[0].map(h=>String(h).trim().toLowerCase());
-      const idx = {
-        dyntaxa: head.indexOf('dyntaxa id number'),
-        sv: head.indexOf('svenskt namn'),
-        sci: head.indexOf('scientific name'),
-        bio: head.findIndex(h=>h.includes('biodivers')),
-        nec: head.findIndex(h=>h.includes('nektar')),
-        growth: head.findIndex(h=>h.includes('växtsätt')||h.includes('vaxtsätt')||h.includes('vaxtsatt')||h.includes('växtsatt')),
-        height: head.findIndex(h=>h.includes('medelhöjd')),
-        light: head.findIndex(h=>h==='light'||h.includes('ljus')),
-        moist: head.findIndex(h=>h==='moisture'||h.includes('fukt')),
-        salt: head.findIndex(h=>h==='salinity'||h.includes('salttålighet')||h.includes('salt'))
-      };
-      if(idx.sci===-1 || idx.sv===-1){ throw new Error('Saknar Scientific name / Svenskt namn'); }
-
-      speciesCsvById.clear(); speciesByNorm.clear();
-      for(let r=1;r<rows.length;r++){
-        const row=rows[r];
-        const dx  = String(row[idx.dyntaxa]||'').trim();
-        const sci = String(row[idx.sci]    ||'').trim();
-        if(!sci) continue;
-        const rec = {
-          dyntaxa: dx,
-          svName: row[idx.sv] || '',
-          sciName: sci,
-          biodiv: idx.bio>=0? asNumber(row[idx.bio]) : null,
-          nectar: idx.nec>=0? asNumber(row[idx.nec]) : null,
-          growth: idx.growth>=0? row[idx.growth] : '',
-          height: idx.height>=0? toMetersFromCm(row[idx.height]) : null,
-          light:  idx.light>=0? row[idx.light]  : '',
-          moist:  idx.moist>=0? row[idx.moist]  : '',
-          salt:   idx.salt>=0?  row[idx.salt]   : ''
-        };
-        if(dx) speciesCsvById.set(dx, rec);
-        speciesByNorm.set(normalizeSciName(sci), rec); // index på normaliserat namn
-      }
-      csvLoaded = true;
+      await parseAndIndexCsvText(txt);
       setStatus(`CSV laddad (${speciesByNorm.size} arter). Välj plats i kartan.`);
     }catch(err){
       console.error(err);
@@ -238,126 +248,82 @@ function updateProgress(frac){
   }
 
   async function fetchFromSOS(lat, lng, radiusMeters, apiKey){
-  // 1) Grundkoll
-  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(radiusMeters) || radiusMeters <= 0) {
-    throw new Error('Ogiltig punkt eller radie (lat/lon/radie). Välj punkt i kartan och ange radie > 0.');
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(radiusMeters) || radiusMeters <= 0) {
+      throw new Error('Ogiltig punkt eller radie.');
+    }
+    const url = 'https://api.artdatabanken.se/species-observation-system/v1/Exports/Download/GeoJson'
+      + '?validateSearchFilter=false&propertyLabelType=Swedish&cultureCode=sv-SE'
+      + '&flat=true&excludeNullValues=false&gzip=false&sensitiveObservations=false';
+    const geom = circlePolygon(lng, lat, radiusMeters);
+    const body = {
+      determinationFilter: 'NoFilter',
+      occurrenceStatus: 'Present',
+      verificationStatus: 'BothVerifiedAndNotVerified',
+      geographics: { geometries: [ geom ] },
+      output: { fieldSet: 'All' },
+      taxon: { attributes: {} }
+    };
+
+    const res = await fetch(url, {
+      method:'POST',
+      headers:{
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-Api-Version': '1.5',
+        'Ocp-Apim-Subscription-Key': apiKey
+      },
+      body: JSON.stringify(body)
+    });
+
+    if(!res.ok){
+      let msg=`SOS HTTP ${res.status}`;
+      try{
+        const txt=await res.text();
+        if(txt){ try{ const j=JSON.parse(txt); msg+=' – '+(j.title||j.detail||j.message||txt); } catch{ msg+=' – '+txt; } }
+      }catch{}
+      throw new Error(msg);
+    }
+    const gj = await res.json();
+    return Array.isArray(gj?.features) ? gj.features : [];
   }
-
-  const url =
-    'https://api.artdatabanken.se/species-observation-system/v1/Exports/Download/GeoJson'
-    + '?validateSearchFilter=false'
-    + '&propertyLabelType=Swedish'
-    + '&cultureCode=sv-SE'
-    + '&flat=true'
-    + '&excludeNullValues=false'
-    + '&gzip=false'
-    + '&sensitiveObservations=false';
-
-  // 2) Bygg cirkelpolygon (lon, lat)
-  const geom = circlePolygon(lng, lat, radiusMeters); // vår hjälpfunktion
-  const body = {
-    determinationFilter: 'NoFilter',
-    occurrenceStatus: 'Present',
-    verificationStatus: 'BothVerifiedAndNotVerified',
-    geographics: { geometries: [ geom ] },
-    output: { fieldSet: 'All' },
-    taxon: { attributes: {} }
-  };
-
-  // Debug: se exakt vad vi skickar (kommentera bort om det stör)
-  console.debug('SOS request body:', body);
-
-  // 3) Skicka
-  const res = await fetch(url, {
-    method:'POST',
-    headers:{
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'X-Api-Version': '1.5',
-      'Ocp-Apim-Subscription-Key': apiKey
-    },
-    body: JSON.stringify(body)
-  });
-
-  // 4) Bättre felutskrift
-  if (!res.ok) {
-    let msg = `SOS HTTP ${res.status}`;
-    try {
-      const txt = await res.text();
-      if (txt) {
-        // försök tolka JSON, annars visa text
-        try {
-          const j = JSON.parse(txt);
-          msg += ' – ' + (j?.title || j?.detail || j?.message || JSON.stringify(j));
-        } catch {
-          msg += ' – ' + txt.slice(0, 500);
-        }
-      }
-    } catch {}
-    console.error('SOS fel. Body som skickades:', body);
-    throw new Error(msg);
-  }
-
-  // 5) OK → GeoJSON
-  const gj = await res.json();
-  return Array.isArray(gj?.features) ? gj.features : [];
-}
-
 
   // ===== Analysera =====
   $('#analyzeBtn').addEventListener('click', async ()=>{
     if(!selectedPoint){ alert('Klicka i kartan för att välja plats.'); return; }
-    const r = +$('#radiusInput').value || 500;
+    const r = +$('#radiusInput').value || 0;
+    if(r<=0){ alert('Ange radie > 0.'); return; }
     const key = $('#sosKey').value.trim();
     if(!key){ alert('Ange din Ocp-Apim-Subscription-Key.'); return; }
     const ignoreCsv = $('#ignoreCsv').checked;
 
     try{
-      setStatus('Hämtar från ArtDatabanken…');
-      showProgress();
-      updateProgress(0.1);
-      const feats = await fetchFromSOS(selectedPoint.lat, selectedPoint.lng, r, key);
-      updateProgress(0.3);
-      const rawCount = feats.length;
-      updateProgress(0.6);
+      showProgress(); updateProgress(0.1);
+      setStatus('Hämtar från ArtDatabanken…'); updateProgress(0.3);
 
+      const feats = await fetchFromSOS(selectedPoint.lat, selectedPoint.lng, r, key);
+      updateProgress(0.6);
+      const rawCount = feats.length;
 
       const per = new Map(); // k -> {count,csv,feats}
       for(const f of feats){
         const p = f.properties || {};
-
-        // --- SVENSKA FÄLTNAMN FRÅN SOS ---
-        const dx = String(
-          p["Dyntaxa taxon id"] ??
-          p["Taxon ID"] ??
-          p.dyntaxaTaxonId ??
-          p.taxonId ?? ''
-        ).trim();
-
-        const sciRaw = String(
-          p["Vetenskapligt namn"] ??
-          p.scientificName ?? ''
-        ).trim();
-
+        const dx = String(p["Dyntaxa taxon id"] ?? p["Taxon ID"] ?? p.dyntaxaTaxonId ?? p.taxonId ?? '').trim();
+        const sciRaw = String(p["Vetenskapligt namn"] ?? p.scientificName ?? '').trim();
         const svFromSOS = String(p["Svenskt namn"] ?? '').trim();
         const norm = normalizeSciName(sciRaw);
-        const k = dx || norm || sciRaw;
-        if(!k) continue;
+        const k = dx || norm || sciRaw; if(!k) continue;
 
-        // --- Koppla till CSV (eller skapa minimal post om Ignorera CSV) ---
         let csv = null;
         if(ignoreCsv){
-          csv = (dx && speciesCsvById.get(dx)) ||
-                speciesByNorm.get(norm) ||
-                {
-                  dyntaxa: dx, svName: svFromSOS, sciName: sciRaw,
-                  biodiv:null, nectar:null, growth:'', height:null, light:'', moist:'', salt:''
-                };
+          csv = (dx && speciesCsvById.get(dx)) || speciesByNorm.get(norm) || {
+            dyntaxa: dx, svName: svFromSOS, sciName: sciRaw,
+            biodiv:null, nectar:null, growth:'', height:null, light:'', moist:'', salt:''
+          };
         }else{
-          if(!csvLoaded){ alert('Ladda vaxtdata.csv först eller kryssa "Ignorera CSV".'); return; }
+          if(!csvLoaded){ alert('CSV inte laddad. Låt auto-laddning lyckas eller välj fil.'); hideProgress(); return; }
           if(dx && speciesCsvById.has(dx)) csv = speciesCsvById.get(dx);
           else csv = speciesByNorm.get(norm);
-          if(!csv) continue; // strikt: visa bara arter som finns i CSV
+          if(!csv) continue;
         }
 
         if(!per.has(k)) per.set(k, {count:0, csv, feats:[]});
@@ -370,17 +336,13 @@ function updateProgress(frac){
 
       renderTable(rows);
       plotAllPoints(rows);
-      updateProgress(1.0);
-      setTimeout(hideProgress, 500);
       setStatus(`Råa obs: ${rawCount} • Efter filter: ${afterCount} • Arter i tabell: ${rows.length} (radie ${r} m)`);
-      if(rawCount>0 && rows.length===0 && !ignoreCsv){
-        console.warn('SOS gav obs, men inga matchade CSV (kontrollera Dyntaxa/namn).');
-      }
+      updateProgress(1.0); setTimeout(hideProgress, 500);
     }catch(err){
       console.error(err);
-      hideProgress();
       setStatus('Fel: '+err.message);
       alert('Fel vid SOS-hämtning: '+err.message);
+      hideProgress();
     }
   });
 
@@ -416,7 +378,8 @@ function updateProgress(frac){
       for(const f of rec.feats){
         const g=f.geometry; if(!g||g.type!=='Point') continue;
         const [lon,lat] = g.coordinates;
-        const m=L.circleMarker([lat,lon],{radius:3,color:'#6ea8ff',fillOpacity:.6}); m.addTo(layerAll); markers.push(m);
+        const m=L.circleMarker([lat,lon],{radius:3,color:'#6ea8ff',fillOpacity:.6}); 
+        m.addTo(layerAll); markers.push(m);
       }
     }
     if(markers.length){ map.fitBounds(L.featureGroup(markers).getBounds().pad(0.2)); }
@@ -432,19 +395,15 @@ function updateProgress(frac){
       const g=f.geometry; if(!g||g.type!=='Point') continue;
       const [lon,lat] = g.coordinates;
       const m=L.circleMarker([lat,lon],{
-  radius:6,
-  color:'#FFD700',      // kantfärg guldgul
-  weight:2,
-  fillColor:'#FFD700',  // fyll guldgul
-  fillOpacity:0.6
-});
- m.addTo(layerSelected); pts.push(m);
+        radius:6, color:'#FFD700', weight:2, fillColor:'#FFD700', fillOpacity:.6  // guldgula markerade punkter
+      });
+      m.addTo(layerSelected); pts.push(m);
     }
     if(pts.length){ map.fitBounds(L.featureGroup(pts).getBounds().pad(0.2)); }
   }
 
   function makeSortable(){
-    const thead=document.querySelector('#resultTable thead'); const tbody=document.querySelector('#resultTable tbody'); const heads=[...thead.querySelectorAll('th')];
+    const thead=$('#resultTable thead'); const tbody=$('#resultTable tbody'); const heads=[...thead.querySelectorAll('th')];
     heads.forEach((th,idx)=> th.addEventListener('click',()=>{
       const asc = !(th.classList.contains('sorted') && th.classList.contains('asc'));
       heads.forEach(h=> h.classList.remove('sorted','asc','desc')); th.classList.add('sorted', asc?'asc':'desc');
@@ -457,6 +416,9 @@ function updateProgress(frac){
       rows.forEach(r=> tbody.appendChild(r));
     }));
   }
+
+  // Start: försök auto-ladda CSV vid http(s)
+  tryAutoLoadCsv();
   </script>
 </body>
 </html>
