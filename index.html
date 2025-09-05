@@ -19,15 +19,15 @@
     button:hover{filter:brightness(1.06)}
     #statusMsg{font-size:13px;color:var(--muted)}
     #map{height:62vh}
+    #resultWrapper{height:32vh;overflow-y:auto;border-top:1px solid var(--line)}
     table{width:100%;border-collapse:separate;border-spacing:0 6px;margin:12px 0}
-    thead th{font-size:13px;color:var(--muted);text-align:left;cursor:pointer;padding:6px 8px;background:#0e1724}
+    thead th{font-size:13px;color:var(--muted);text-align:left;cursor:pointer;padding:6px 8px;background:#0e1724;position:sticky;top:0}
     tbody tr{background:#0f1723;border:1px solid #1e2b3b}
     tbody td{padding:8px 10px}
     tr:hover{outline:1px solid #27405f}
     tr.selected{outline:2px solid gold;background-color:#3b2b00}
     .tag{font-size:11px;border:1px solid #2a4462;border-radius:999px;padding:2px 6px;color:#cfe1ff;background:#0e1b2f}
-    /* diskret filväljare; visas bara om autoload misslyckas */
-    #csvPicker{display:none}
+    #csvPicker{display:none} /* visas bara om autoload misslyckas */
   </style>
 </head>
 <body>
@@ -52,28 +52,30 @@
 
   <div id="map"></div>
 
-  <table id="resultTable">
-    <thead>
-      <tr>
-        <th>Svenskt namn</th>
-        <th>Vetenskapligt namn</th>
-        <th>Biodiversitet</th>
-        <th>Nektar</th>
-        <th>Antal</th>
-        <th>Växtsätt</th>
-        <th>Medelhöjd (m)</th>
-        <th>Ljus</th>
-        <th>Fukt</th>
-        <th>Salt</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  </table>
+  <div id="resultWrapper">
+    <table id="resultTable">
+      <thead>
+        <tr>
+          <th>Svenskt namn</th>
+          <th>Vetenskapligt namn</th>
+          <th>Biodiversitet</th>
+          <th>Nektar</th>
+          <th>Antal</th>
+          <th>Växtsätt</th>
+          <th>Medelhöjd (m)</th>
+          <th>Ljus</th>
+          <th>Fukt</th>
+          <th>Salt</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-
-  const SOS_API_KEY = "946a74eee3384494b1905c06ad4420b0";
+  // === 1) LÄGG DIN API-NYCKEL HÄR ===
+  const SOS_API_KEY = "DIN_API_NYCKEL_HÄR";
 
   // === Hjälpare ===
   const $ = s => document.querySelector(s);
@@ -90,7 +92,14 @@
       .replace(/\s+\(.+?\)/g,'').replace(/\s+[A-ZÅÄÖ][a-z]+\.?$/,'')
       .trim().split(/\s+/).slice(0,2).join(' ').toLowerCase();
   }
+  function getAcceptedDyntaxaId(props){
+    const raw = props["Godkänd namnanvändande id"] || props.acceptedNameUsageID || props.acceptedNameUsageId || '';
+    if(!raw) return null;
+    const m = String(raw).match(/Taxon:(\d+)/); // "urn:lsid:dyntaxa.se:Taxon:2812"
+    return m ? m[1] : null;
+  }
 
+  // Donut-progress
   function showProgress(){ $('#progressContainer').style.display='block'; updateProgress(0); }
   function hideProgress(){ $('#progressContainer').style.display='none'; }
   function updateProgress(frac){
@@ -126,9 +135,8 @@
         const txt = await res.text();
         await indexCsvText(txt);
         return;
-      }catch{ /* fallthrough to picker */ }
+      }catch{/* visa picker om autoload faller */}
     }
-    // visa filväljaren endast om autoload misslyckas
     $('#csvPicker').style.display='inline';
   }
 
@@ -244,23 +252,31 @@
       if(!csvLoaded){ setStatus('CSV laddas…'); }
       showProgress(); updateProgress(0.2);
       const feats = await fetchFromSOS(selectedPoint.lat, selectedPoint.lng, r);
-      updateProgress(0.6);
-      const per = new Map();
-      for(const f of feats){
-        const p=f.properties||{};
-        const dx=String(p["Dyntaxa taxon id"]??p["Taxon ID"]??p.dyntaxaTaxonId??p.taxonId??'').trim();
-        const sciRaw=String(p["Vetenskapligt namn"]??p.scientificName??'').trim();
-        const svFromSOS=String(p["Svenskt namn"]??'').trim();
-        const norm=normalizeSciName(sciRaw); const k=dx||norm||sciRaw; if(!k) continue;
+      updateProgress(0.55);
 
-        // Visa bara arter som finns i CSV (du har redan filtrerat till inhemska i CSV)
-        let csv=null;
-        if(dx && speciesCsvById.has(dx)) csv=speciesCsvById.get(dx);
-        else csv=speciesByNorm.get(norm);
-        if(!csv) continue;
+      const per = new Map(); // gruppKey -> {count,csv,feats}
+      for (const f of feats){
+        const p = f.properties || {};
+        const dxAccepted = getAcceptedDyntaxaId(p);
+        const dxRaw = String(p["Dyntaxa taxon id"] ?? p["Taxon ID"] ?? p.dyntaxaTaxonId ?? p.taxonId ?? '').trim();
+        const sciRaw = String(p["Vetenskapligt namn"] ?? p.scientificName ?? '').trim();
+        const svFromSOS = String(p["Svenskt namn"] ?? '').trim();
+        const norm = normalizeSciName(sciRaw);
 
-        if(!per.has(k)) per.set(k,{count:0,csv,feats:[]});
-        const rec=per.get(k); rec.count++; rec.feats.push(f);
+        // 1) Matcha CSV med prioritet: accepted -> raw -> norm
+        let csv = null;
+        if (dxAccepted && speciesCsvById.has(dxAccepted))      csv = speciesCsvById.get(dxAccepted);
+        else if (dxRaw && speciesCsvById.has(dxRaw))           csv = speciesCsvById.get(dxRaw);
+        else if (speciesByNorm.has(norm))                      csv = speciesByNorm.get(norm);
+        else                                                   continue; // bara arter i CSV
+
+        // 2) Stabil gruppnyckel från CSV
+        const groupKey = csv.dyntaxa && String(csv.dyntaxa).trim()
+                        ? String(csv.dyntaxa).trim()
+                        : (normalizeSciName(csv.sciName) || norm || sciRaw.toLowerCase());
+
+        if(!per.has(groupKey)) per.set(groupKey, { count:0, csv, feats:[] });
+        const rec = per.get(groupKey); rec.count++; rec.feats.push(f);
       }
 
       const rows=[...per.values()].map(r=>({...r,score:(r.csv.biodiv??0)*2+(r.csv.nectar??0)}))
