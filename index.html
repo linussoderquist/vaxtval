@@ -33,7 +33,7 @@
     #connPanel{
       position: fixed; right: 16px; bottom: 170px; z-index: 8000;
       background: rgba(13,20,32,.92); border:1px solid #1a2533; border-radius:12px;
-      padding:12px 14px; min-width: 280px; color: var(--text); box-shadow:0 8px 24px rgba(0,0,0,.35);
+      padding:12px 14px; min-width: 320px; color: var(--text); box-shadow:0 8px 24px rgba(0,0,0,.35);
       display:none;
     }
     #connPanel h3{margin:0 0 8px; font-size:14px; color:#cfe1ff}
@@ -91,27 +91,31 @@
 
   <!-- Konnektivitets-panel -->
   <div id="connPanel">
-    <h3>Konnektivitet (vald art)</h3>
+    <h3>Konnektivitet & fragmentering (vald art)</h3>
     <div class="row">
       <label>Spridningsradie (m):</label>
       <input type="number" id="connRadius" value="1000" min="50" step="50">
       <button id="connBtn">Analys</button>
     </div>
-    <div class="mini">Analyserar kopplingar om en ny punkt placeras på vald kartposition.</div>
+    <div class="mini">Jämför nätverket före/efter att en ny punkt placeras på vald kartposition.</div>
     <div class="kpi" id="connKpi">
-      <div><span>Komponenter<br>före</span><b id="kCompBefore">–</b></div>
-      <div><span>Komponenter<br>efter</span><b id="kCompAfter">–</b></div>
-      <div><span>Största kluster<br>före</span><b id="kMaxBefore">–</b></div>
-      <div><span>Största kluster<br>efter</span><b id="kMaxAfter">–</b></div>
+      <div><span>Komponenter<br>FÖRE</span><b id="kCompBefore">–</b></div>
+      <div><span>Komponenter<br>EFTER</span><b id="kCompAfter">–</b></div>
+      <div><span>Största kluster<br>FÖRE</span><b id="kMaxBefore">–</b></div>
+      <div><span>Största kluster<br>EFTER</span><b id="kMaxAfter">–</b></div>
       <div><span>Direkta länkar<br>till ny punkt</span><b id="kLinksNew">–</b></div>
       <div><span>Δ-komponenter</span><b id="kDeltaComp">–</b></div>
+      <div><span>GCF = max/n<br>FÖRE</span><b id="kGcfBefore">–</b></div>
+      <div><span>GCF = max/n<br>EFTER</span><b id="kGcfAfter">–</b></div>
+      <div><span>Fragmentering (1−Σ s²/n²)<br>FÖRE</span><b id="kFragBefore">–</b></div>
+      <div><span>Fragmentering (1−Σ s²/n²)<br>EFTER</span><b id="kFragAfter">–</b></div>
     </div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
   /* ================= CONFIG ================= */
-  const SOS_API_KEY = "946a74eee3384494b1905c06ad4420b0"; // lägg din nyckel här
+  const SOS_API_KEY = "DIN_API_NYCKEL_HÄR"; // <— lägg din ArtDatabanken-nyckel här
 
   /* ================ Hjälpare ================ */
   const $ = s => document.querySelector(s);
@@ -350,7 +354,12 @@
     const sizes=uf.compSizes();
     const compCount=sizes.length;
     const maxComp = sizes.length? Math.max(...sizes) : 0;
-    return {compCount, maxComp};
+    const nTot = n;
+    // Fragmenteringsmått
+    const gcf = nTot>0 ? (maxComp / nTot) : 0;         // andel i största komponent
+    const sumSq = sizes.reduce((s,v)=>s+v*v,0);
+    const frag = nTot>0 ? (1 - (sumSq / (nTot*nTot))) : 0; // 1 - Σ s_i^2 / n^2
+    return {compCount, maxComp, gcf, frag, n: nTot};
   }
 
   function analyzeConnectivityForSpecies(speciesFeats){
@@ -395,12 +404,17 @@
     }
 
     // KPI
+    const fmt = x => (Math.round(x*100)/100).toString(); // två decimaler
     document.getElementById('kCompBefore').textContent = before.compCount;
     document.getElementById('kCompAfter').textContent  = after.compCount;
     document.getElementById('kMaxBefore').textContent  = before.maxComp;
     document.getElementById('kMaxAfter').textContent   = after.maxComp;
     document.getElementById('kLinksNew').textContent   = links;
     document.getElementById('kDeltaComp').textContent  = before.compCount - after.compCount;
+    document.getElementById('kGcfBefore').textContent  = fmt(before.gcf);
+    document.getElementById('kGcfAfter').textContent   = fmt(after.gcf);
+    document.getElementById('kFragBefore').textContent = fmt(before.frag);
+    document.getElementById('kFragAfter').textContent  = fmt(after.frag);
 
     // Visa panel
     document.getElementById('connPanel').style.display = 'block';
