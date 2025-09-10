@@ -21,7 +21,7 @@
     #map{height:62vh}
     #resultWrapper{height:32vh;overflow-y:auto;border-top:1px solid var(--line)}
     table{width:100%;border-collapse:separate;border-spacing:0 6px;margin:12px 0}
-    thead th{font-size:13px;color:var(--muted);text-align:left;cursor:pointer;padding:6px 8px;background:#0e1724;position:sticky;top:0}
+    thead th{font-size:13px;color:var(--muted);text-align:left;cursor:pointer;padding:6px 8px;background:#0e1724;position:sticky;top:0;z-index:1}
     tbody tr{background:#0f1723;border:1px solid #1e2b3b}
     tbody td{padding:8px 10px}
     tr:hover{outline:1px solid #27405f}
@@ -29,22 +29,20 @@
     .tag{font-size:11px;border:1px solid #2a4462;border-radius:999px;padding:2px 6px;color:#cfe1ff;background:#0e1b2f}
     #csvPicker{display:none}
 
-    /* Konnektivitets-UI */
-    #connPanel{
-      position: fixed; right: 16px; bottom: 170px; z-index: 8000;
-      background: rgba(13,20,32,.92); border:1px solid #1a2533; border-radius:12px;
-      padding:12px 14px; min-width: 340px; color: var(--text); box-shadow:0 8px 24px rgba(0,0,0,.35);
-      display:none;
+    /* Donut i mitten */
+    #progressContainer{
+      display:none; position:fixed; z-index:9999; inset:0;
+      background:rgba(0,0,0,.35);
     }
-    #connPanel h3{margin:0 0 8px; font-size:14px; color:#cfe1ff}
-    #connPanel .row{display:flex; align-items:center; gap:8px; margin:6px 0}
-    #connPanel input[type="number"]{
-      width:110px; background:#0a1320; border:1px solid #263447; color:var(--text); border-radius:8px; padding:6px 8px;
+    #progressInner{
+      position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+      width:160px;height:160px;padding:10px;border-radius:18px;
+      background:rgba(13,20,32,.95); box-shadow:0 12px 36px rgba(0,0,0,.45);
     }
-    #connPanel .mini{font-size:12px; color:var(--muted)}
-    #connPanel .kpi{display:grid; grid-template-columns: 1fr 1fr; gap:6px; margin-top:8px}
-    #connPanel .kpi div{background:#0f1723; border:1px solid #1e2b3b; border-radius:8px; padding:6px 8px}
-    #connPanel .kpi b{display:block; font-size:16px; margin:2px 0}
+    #progressDonut{display:block;margin:0 auto}
+    #progressInner img{position:absolute;top:50%;left:50%;width:56px;height:56px;transform:translate(-50%,-50%);pointer-events:none}
+    .num { font-variant-numeric: tabular-nums; }
+    .tight { white-space:nowrap; }
   </style>
 </head>
 <body>
@@ -54,17 +52,27 @@
       <label id="csvPicker">vaxtdata.csv
         <input type="file" id="csvInput" accept=".csv">
       </label>
-      Radie (m): <input type="number" id="radiusInput" value="500" min="10" step="10">
-      <button id="analyzeBtn">Analysera</button>
+
+      <!-- Insamlingsradie + Hämta -->
+      Radie (m):
+      <input type="number" id="radiusInput" value="500" min="10" step="10">
+      <button id="fetchBtn">Hämta observationer</button>
+
+      <!-- Konnektivitet -->
+      <span class="tight">Spridningsradie (m):</span>
+      <input type="number" id="connRadius" value="1000" min="50" step="50">
+      <button id="analyzeBtn">Analysera konnektivitet</button>
+
       <span id="statusMsg"></span>
     </div>
   </header>
 
-  <!-- Donut-progress -->
-  <div id="progressContainer" style="display:none;position:fixed;z-index:9999;right:16px;bottom:16px;
-    width:120px;height:120px;padding:6px;border-radius:14px;background:rgba(13,20,32,.85);box-shadow:0 8px 24px rgba(0,0,0,.35);">
-    <canvas id="progressDonut" width="120" height="120"></canvas>
-    <img src="icon.png" alt="ikon" style="position:absolute;top:50%;left:50%;width:48px;height:48px;transform:translate(-50%,-50%);pointer-events:none;">
+  <!-- Donut-progress i centrum -->
+  <div id="progressContainer">
+    <div id="progressInner">
+      <canvas id="progressDonut" width="160" height="160"></canvas>
+      <img src="icon.png" alt="ikon">
+    </div>
   </div>
 
   <div id="map"></div>
@@ -83,40 +91,26 @@
           <th>Ljus</th>
           <th>Fukt</th>
           <th>Salt</th>
+          <!-- Nya konnektivitetskolumner (per art) -->
+          <th class="tight" title="Komponenter före">Comp F</th>
+          <th class="tight" title="Komponenter efter">Comp E</th>
+          <th class="tight" title="Minskning av komponenter">ΔComp</th>
+          <th class="tight" title="Giant Component Fraction före">GCF F</th>
+          <th class="tight" title="Giant Component Fraction efter">GCF E</th>
+          <th class="tight" title="Fragmentering 1−Σs²/n² före">Frag F</th>
+          <th class="tight" title="Fragmentering 1−Σs²/n² efter">Frag E</th>
+          <th class="tight" title="Direkta länkar från ny punkt">Links</th>
+          <th class="tight" title="Betweenness centrality (ny punkt)">BC(new)</th>
         </tr>
       </thead>
       <tbody></tbody>
     </table>
   </div>
 
-  <!-- Konnektivitets-panel -->
-  <div id="connPanel">
-    <h3>Konnektivitet & fragmentering (vald art)</h3>
-    <div class="row">
-      <label>Spridningsradie (m):</label>
-      <input type="number" id="connRadius" value="1000" min="50" step="50">
-      <button id="connBtn">Analys</button>
-    </div>
-    <div class="mini">Nätverket före/efter att en ny punkt placeras på vald kartposition.</div>
-    <div class="kpi" id="connKpi">
-      <div><span>Komponenter<br>FÖRE</span><b id="kCompBefore">–</b></div>
-      <div><span>Komponenter<br>EFTER</span><b id="kCompAfter">–</b></div>
-      <div><span>Största kluster<br>FÖRE</span><b id="kMaxBefore">–</b></div>
-      <div><span>Största kluster<br>EFTER</span><b id="kMaxAfter">–</b></div>
-      <div><span>Direkta länkar<br>till ny punkt</span><b id="kLinksNew">–</b></div>
-      <div><span>Δ-komponenter</span><b id="kDeltaComp">–</b></div>
-      <div><span>GCF = max/n<br>FÖRE</span><b id="kGcfBefore">–</b></div>
-      <div><span>GCF = max/n<br>EFTER</span><b id="kGcfAfter">–</b></div>
-      <div><span>Fragmentering 1−Σs²/n²<br>FÖRE</span><b id="kFragBefore">–</b></div>
-      <div><span>Fragmentering 1−Σs²/n²<br>EFTER</span><b id="kFragAfter">–</b></div>
-      <div style="grid-column:1 / span 2;"><span>Betweenness (ny punkt, normerad)</span><b id="kBCNew">–</b></div>
-    </div>
-  </div>
-
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
   /* ================= CONFIG ================= */
-  const SOS_API_KEY = "946a74eee3384494b1905c06ad4420b0"; //
+  const SOS_API_KEY = "946a74eee3384494b1905c06ad4420b0";
 
   /* ================ Hjälpare ================ */
   const $ = s => document.querySelector(s);
@@ -125,6 +119,8 @@
   const asNumber = x => { const n=parseFloat(String(x??'').replace(',','.')); return Number.isFinite(n)? n : null; };
   const toMetersFromCm = v => { const n=asNumber(v); return n==null? null : n/100; };
   const escapeHTML = s => String(s).replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const fmt2 = x => Number.isFinite(x) ? (Math.round(x*100)/100).toString() : '–';
+  const fmt3 = x => Number.isFinite(x) ? (Math.round(x*1000)/1000).toString() : '–';
 
   function normalizeSciName(s){
     if(!s) return '';
@@ -140,14 +136,16 @@
     return m ? m[1] : null;
   }
 
-  // Donut-progress
+  // Donut-progress (center)
   function showProgress(){ $('#progressContainer').style.display='block'; updateProgress(0); }
   function hideProgress(){ $('#progressContainer').style.display='none'; }
   function updateProgress(frac){
     const canvas=$('#progressDonut'), ctx=canvas.getContext('2d'), s=canvas.width;
     ctx.clearRect(0,0,s,s);
-    ctx.beginPath(); ctx.arc(s/2,s/2,s/2-6,0,2*Math.PI); ctx.strokeStyle='#223344'; ctx.lineWidth=12; ctx.stroke();
-    ctx.beginPath(); ctx.arc(s/2,s/2,s/2-6,-Math.PI/2,-Math.PI/2+2*Math.PI*frac); ctx.strokeStyle='#77aaff'; ctx.lineWidth=12; ctx.stroke();
+    // bakgrundring
+    ctx.beginPath(); ctx.arc(s/2,s/2,s/2-8,0,2*Math.PI); ctx.strokeStyle='#223344'; ctx.lineWidth=14; ctx.stroke();
+    // progressring
+    ctx.beginPath(); ctx.arc(s/2,s/2,s/2-8,-Math.PI/2,-Math.PI/2+2*Math.PI*frac); ctx.strokeStyle='#77aaff'; ctx.lineWidth=14; ctx.stroke();
   }
 
   function parseCSV(text, delimiter=';'){
@@ -286,9 +284,101 @@
     return Array.isArray(gj?.features)? gj.features : [];
   }
 
-  /* ================== Analys ================== */
-  $('#analyzeBtn').addEventListener('click', async ()=>{
-    if(!selectedPoint){ setStatus('Välj en plats i kartan.'); return; }
+  /* ============ Graph utils & metrics ============ */
+  function haversineMeters(lat1, lon1, lat2, lon2){
+    const R=6371000;
+    const dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+    return 2*R*Math.asin(Math.sqrt(a));
+  }
+  class UF{
+    constructor(n){ this.p=Array.from({length:n},(_,i)=>i); this.r=new Array(n).fill(0); this.sz=new Array(n).fill(1);}
+    find(x){ return this.p[x]===x? x : (this.p[x]=this.find(this.p[x])); }
+    union(a,b){ a=this.find(a); b=this.find(b); if(a===b) return;
+      if(this.r[a]<this.r[b]) [a,b]=[b,a]; this.p[b]=a; this.sz[a]+=this.sz[b]; if(this.r[a]===this.r[b]) this.r[a]++; }
+    compSizes(){ const m=new Map(); for(let i=0;i<this.p.length;i++){ const r=this.find(i); m.set(r,(m.get(r)||0)+1);} return [...m.values()]; }
+  }
+  function buildGraph(points, threshM){
+    const n = points.length;
+    const adj = Array.from({length:n}, ()=>[]);
+    const edges = [];
+    const deg = new Array(n).fill(0);
+    for(let i=0;i<n;i++){
+      for(let j=i+1;j<n;j++){
+        const d=haversineMeters(points[i][0],points[i][1],points[j][0],points[j][1]);
+        if(d<=threshM){
+          adj[i].push(j); adj[j].push(i);
+          edges.push([i,j]);
+          deg[i]++; deg[j]++;
+        }
+      }
+    }
+    return {adj, edges, deg, n};
+  }
+  function degreeCentrality(deg, n){ const den=Math.max(1,n-1); return deg.map(d=>d/den); }
+  function brandesBetweenness(adj){
+    const n = adj.length;
+    const CB = new Array(n).fill(0);
+    const S = [];
+    const P = Array.from({length:n},()=>[]);
+    const sigma = new Array(n);
+    const d = new Array(n);
+    const Q = [];
+    for(let s=0; s<n; s++){
+      for(let i=0;i<n;i++){ P[i]=[]; sigma[i]=0; d[i]=-1; }
+      sigma[s]=1; d[s]=0; S.length=0; Q.length=0; Q.push(s);
+      while(Q.length){
+        const v=Q.shift(); S.push(v);
+        for(const w of adj[v]){
+          if(d[w]<0){d[w]=d[v]+1; Q.push(w);}
+          if(d[w]===d[v]+1){ sigma[w]+=sigma[v]; P[w].push(v); }
+        }
+      }
+      const delta=new Array(n).fill(0);
+      while(S.length){
+        const w=S.pop();
+        for(const v of P[w]) delta[v]+= (sigma[v]/sigma[w])*(1+delta[w]);
+        if(w!==s) CB[w]+=delta[w];
+      }
+    }
+    const normDen = (n>2) ? ((n-1)*(n-2)/2) : 1;
+    return CB.map(v=> v/normDen);
+  }
+  function componentsFor(points, threshM){
+    const n=points.length, uf=new UF(n);
+    for(let i=0;i<n;i++){
+      for(let j=i+1;j<n;j++){
+        const d=haversineMeters(points[i][0],points[i][1],points[j][0],points[j][1]);
+        if(d<=threshM) uf.union(i,j);
+      }
+    }
+    const sizes=uf.compSizes();
+    const compCount=sizes.length;
+    const maxComp = sizes.length? Math.max(...sizes) : 0;
+    const nTot = n;
+    const gcf = nTot>0 ? (maxComp / nTot) : 0;
+    const sumSq = sizes.reduce((s,v)=>s+v*v,0);
+    const frag = nTot>0 ? (1 - (sumSq / (nTot*nTot))) : 0;
+    return {compCount, maxComp, gcf, frag, n: nTot};
+  }
+  function drawEdgesWithDegreeStyling(points, edges, degC, color){
+    for(const [i,j] of edges){
+      const avg = (degC[i] + degC[j]) / 2;
+      const weight = 0.5 + 4.0 * avg;
+      const opacity = 0.25 + 0.65 * avg;
+      L.polyline([[points[i][0],points[i][1]],[points[j][0],points[j][1]]],
+        {color, weight, opacity}).addTo(layerLinks);
+    }
+  }
+
+  /* ========== App-state ========== */
+  let _featuresBySpecies = []; // [{csv, feats, count, score}, ...] efter Hämta
+  let _lastRows = [];
+  let _speciesMetrics = new Map(); // key -> metrics
+
+  /* ============== Hämta obs ============== */
+  $('#fetchBtn').addEventListener('click', async ()=>{
+    if(!selectedPoint){ setStatus('Klicka i kartan för att välja plats.'); return; }
     const r = +$('#radiusInput').value || 0; if(r<=0){ setStatus('Ange radie > 0.'); return; }
     try{
       if(!csvLoaded){ setStatus('CSV laddas…'); }
@@ -320,225 +410,111 @@
 
       const rows=[...per.values()].map(r=>({...r,score:(r.csv.biodiv??0)*2+(r.csv.nectar??0)}))
                   .sort((a,b)=>{const s=(b.score??0)-(a.score??0); if(s) return s; return (b.count??0)-(a.count??0);});
+
+      _featuresBySpecies = rows;
+      _speciesMetrics.clear(); // reset metrics (kräver ny Analys)
       renderTable(rows);
       plotAllPoints(rows);
       setStatus(rows.length? '' : 'Inga arter matchade CSV inom vald radie.');
-      updateProgress(1.0); setTimeout(hideProgress,400);
+      updateProgress(1.0); setTimeout(hideProgress,350);
     }catch(err){ console.error(err); setStatus('Fel: '+err.message); hideProgress(); }
   });
 
-  // Avstånd (m)
-  function haversineMeters(lat1, lon1, lat2, lon2){
-    const R=6371000;
-    const dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
-    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
-    return 2*R*Math.asin(Math.sqrt(a));
-  }
+  /* ======= Analys per art -> fyll tabellkolumner ======= */
+  $('#analyzeBtn').addEventListener('click', ()=>{
+    if(!_featuresBySpecies.length){ setStatus('Hämta observationer först.'); return; }
+    if(!selectedPoint){ setStatus('Klicka i kartan för att välja plats.'); return; }
+    const thresh = +$('#connRadius').value || 1000;
 
-  // Union-Find
-  class UF{
-    constructor(n){ this.p=Array.from({length:n},(_,i)=>i); this.r=new Array(n).fill(0); this.sz=new Array(n).fill(1);}
-    find(x){ return this.p[x]===x? x : (this.p[x]=this.find(this.p[x])); }
-    union(a,b){ a=this.find(a); b=this.find(b); if(a===b) return;
-      if(this.r[a]<this.r[b]) [a,b]=[b,a]; this.p[b]=a; this.sz[a]+=this.sz[b]; if(this.r[a]===this.r[b]) this.r[a]++; }
-    compSizes(){ const m=new Map(); for(let i=0;i<this.p.length;i++){ const r=this.find(i); m.set(r,(m.get(r)||0)+1);} return [...m.values()]; }
-  }
-
-  // Bygg graf från punkter inom tröskel
-  function buildGraph(points, threshM){
-    const n = points.length;
-    const adj = Array.from({length:n}, ()=>[]);
-    const edges = [];
-    const deg = new Array(n).fill(0);
-    for(let i=0;i<n;i++){
-      for(let j=i+1;j<n;j++){
-        const d=haversineMeters(points[i][0],points[i][1],points[j][0],points[j][1]);
-        if(d<=threshM){
-          adj[i].push(j); adj[j].push(i);
-          edges.push([i,j]);
-          deg[i]++; deg[j]++;
-        }
+    // Beräkna per art och uppdatera celler
+    for(const rec of _featuresBySpecies){
+      const key = rec.csv.dyntaxa || normalizeSciName(rec.csv.sciName);
+      const feats = rec.feats;
+      const pts = [];
+      for(const f of feats){
+        const g=f.geometry; if(!g||g.type!=='Point') continue;
+        const [lon,lat]=g.coordinates; pts.push([lat,lon]);
       }
+      if(!pts.length) continue;
+
+      // Före/efter
+      const before = componentsFor(pts, thresh);
+      const withNew = pts.concat([[selectedPoint.lat, selectedPoint.lng]]);
+      const after  = componentsFor(withNew, thresh);
+
+      // Bygg graf för betweenness + links (efter)
+      const Gafter = buildGraph(withNew, thresh);
+      const BC = brandesBetweenness(Gafter.adj);
+      const newIdx = withNew.length-1;
+      const bcNew = (Gafter.n>1) ? BC[newIdx] : 0;
+      const links = (Gafter.adj[newIdx]||[]).length;
+
+      const metrics = {
+        compF: before.compCount, compE: after.compCount, dComp: before.compCount - after.compCount,
+        gcfF: before.gcf, gcfE: after.gcf,
+        fragF: before.frag, fragE: after.frag,
+        links, bcNew
+      };
+      _speciesMetrics.set(key, metrics);
     }
-    return {adj, edges, deg, n};
-  }
-
-  // Degree centrality [0..1]
-  function degreeCentrality(deg, n){
-    const den = Math.max(1, n-1);
-    return deg.map(d => d/den);
-  }
-
-  // Brandes betweenness centrality för alla noder, o-viktad, odirigerad.
-  // Returnerar normerade värden i [0,1] (delas med ((n-1)(n-2)/2)).
-  function brandesBetweenness(adj){
-    const n = adj.length;
-    const CB = new Array(n).fill(0);
-    const S = [];                      // stack
-    const P = Array.from({length:n},()=>[]); // predecessors
-    const sigma = new Array(n);
-    const d = new Array(n);
-    const Q = [];
-
-    for(let s=0; s<n; s++){
-      // init
-      for(let i=0;i<n;i++){ P[i] = []; sigma[i] = 0; d[i] = -1; }
-      sigma[s] = 1; d[s] = 0;
-      S.length = 0; Q.length = 0; Q.push(s);
-
-      // BFS
-      while(Q.length){
-        const v = Q.shift();
-        S.push(v);
-        for(const w of adj[v]){
-          if(d[w] < 0){ // w found first time?
-            d[w] = d[v] + 1;
-            Q.push(w);
-          }
-          if(d[w] === d[v] + 1){
-            sigma[w] += sigma[v];
-            P[w].push(v);
-          }
-        }
-      }
-
-      // Accumulation
-      const delta = new Array(n).fill(0);
-      while(S.length){
-        const w = S.pop();
-        for(const v of P[w]){
-          delta[v] += (sigma[v]/sigma[w]) * (1 + delta[w]);
-        }
-        if(w !== s) CB[w] += delta[w];
-      }
-    }
-
-    // normalisera till [0,1] för odirigerad graf
-    const normDen = (n>2) ? ((n-1)*(n-2)/2) : 1;
-    return CB.map(v => v / normDen);
-  }
-
-  function componentsFor(points, threshM){
-    const n=points.length, uf=new UF(n);
-    for(let i=0;i<n;i++){
-      for(let j=i+1;j<n;j++){
-        const d=haversineMeters(points[i][0],points[i][1],points[j][0],points[j][1]);
-        if(d<=threshM) uf.union(i,j);
-      }
-    }
-    const sizes=uf.compSizes();
-    const compCount=sizes.length;
-    const maxComp = sizes.length? Math.max(...sizes) : 0;
-    const nTot = n;
-    const gcf = nTot>0 ? (maxComp / nTot) : 0;
-    const sumSq = sizes.reduce((s,v)=>s+v*v,0);
-    const frag = nTot>0 ? (1 - (sumSq / (nTot*nTot))) : 0;
-    return {compCount, maxComp, gcf, frag, n: nTot};
-  }
-
-  // Rita kanter med tjocklek/alpha enligt degree centrality
-  function drawEdgesWithDegreeStyling(points, edges, degC, color){
-    for(const [i,j] of edges){
-      const avg = (degC[i] + degC[j]) / 2;
-      const weight = 0.5 + 4.0 * avg;           // 0.5 .. 4.5 px
-      const opacity = 0.25 + 0.65 * avg;        // 0.25 .. 0.90
-      L.polyline([[points[i][0],points[i][1]],[points[j][0],points[j][1]]],
-        {color, weight, opacity}).addTo(layerLinks);
-    }
-  }
-
-  function analyzeConnectivityForSpecies(speciesFeats){
-    const pts = [];      // [[lat,lon], ...]
-    const ptCoords = [];
-    for (const f of speciesFeats){
-      const g = f.geometry; if (!g || g.type !== 'Point') continue;
-      const [lon, lat] = g.coordinates;
-      pts.push([lat, lon]);
-      ptCoords.push([lat, lon]);
-    }
-    if (!pts.length){ setStatus('Inga punktdata för arten.'); return; }
-    if (!selectedPoint){ setStatus('Välj en plats i kartan först.'); return; }
-
-    const thresh = +document.getElementById('connRadius').value || 1000;
-
-    // Före/efter (fragmentering)
-    const before = componentsFor(pts, thresh);
-    const withNew = pts.concat([[selectedPoint.lat, selectedPoint.lng]]);
-    const after  = componentsFor(withNew, thresh);
-
-    // Bygg graf före och rita alla befintliga kanter (blå) viktade av degree centrality
-    layerLinks.clearLayers();
-    const Gbefore = buildGraph(pts, thresh);
-    const degC_before = degreeCentrality(Gbefore.deg, Gbefore.n);
-    drawEdgesWithDegreeStyling(pts, Gbefore.edges, degC_before, '#3aa0ff');
-
-    // Rita guldkanter från den nya punkten, också med degree centrality (beräknat EFTER)
-    const Gafter = buildGraph(withNew, thresh);
-    const degC_after = degreeCentrality(Gafter.deg, Gafter.n);
-
-    const newIdx = withNew.length - 1;
-    let links = 0;
-    for(const nb of Gafter.adj[newIdx]){
-      links++;
-      const avg = (degC_after[newIdx] + degC_after[nb]) / 2;
-      const weight = 1.0 + 4.0 * avg;
-      const opacity = 0.35 + 0.6 * avg;
-      L.polyline([[withNew[newIdx][0],withNew[newIdx][1]],[withNew[nb][0],withNew[nb][1]]],
-        {color:'#FFD700', weight, opacity}).addTo(layerLinks);
-    }
-
-    // Betweenness centrality för nya noden (normerad [0..1])
-    const BC = brandesBetweenness(Gafter.adj);
-    const bcNew = (Gafter.n>1) ? BC[newIdx] : 0;
-
-    // KPI
-    const fmt = x => (Math.round(x*1000)/1000).toString();
-    document.getElementById('kCompBefore').textContent = before.compCount;
-    document.getElementById('kCompAfter').textContent  = after.compCount;
-    document.getElementById('kMaxBefore').textContent  = before.maxComp;
-    document.getElementById('kMaxAfter').textContent   = after.maxComp;
-    document.getElementById('kLinksNew').textContent   = links;
-    document.getElementById('kDeltaComp').textContent  = before.compCount - after.compCount;
-    document.getElementById('kGcfBefore').textContent  = fmt(before.gcf);
-    document.getElementById('kGcfAfter').textContent   = fmt(after.gcf);
-    document.getElementById('kFragBefore').textContent = fmt(before.frag);
-    document.getElementById('kFragAfter').textContent  = fmt(after.frag);
-    document.getElementById('kBCNew').textContent      = fmt(bcNew);
-
-    // Visa panel
-    document.getElementById('connPanel').style.display = 'block';
-  }
-
-  document.getElementById('connBtn').addEventListener('click', ()=>{
-    if(!window._lastSelectedSpeciesFeats || !window._lastSelectedSpeciesFeats.length){
-      setStatus('Välj först en art i tabellen.'); return;
-    }
-    analyzeConnectivityForSpecies(window._lastSelectedSpeciesFeats);
+    // uppdatera tabellceller
+    updateMetricsCells();
+    setStatus('Konnektivitetsmått uppdaterade.');
   });
+
+  function updateMetricsCells(){
+    const tbody = $('#resultTable tbody');
+    for(const tr of tbody.querySelectorAll('tr')){
+      const key = tr.dataset.key;
+      const m = _speciesMetrics.get(key);
+      const cells = tr.querySelectorAll('td');
+      const baseCols = 10; // fasta kolumner före mått
+      if(m){
+        cells[baseCols+0].textContent = m.compF;
+        cells[baseCols+1].textContent = m.compE;
+        cells[baseCols+2].textContent = m.dComp;
+        cells[baseCols+3].textContent = fmt2(m.gcfF);
+        cells[baseCols+4].textContent = fmt2(m.gcfE);
+        cells[baseCols+5].textContent = fmt2(m.fragF);
+        cells[baseCols+6].textContent = fmt2(m.fragE);
+        cells[baseCols+7].textContent = m.links;
+        cells[baseCols+8].textContent = fmt3(m.bcNew);
+      }else{
+        for(let i=0;i<9;i++) cells[baseCols+i].textContent = '–';
+      }
+    }
+  }
 
   /* ========= Tabell & karta (UI) ========= */
   function renderTable(items){
     const tb=$('#resultTable tbody'); tb.innerHTML='';
+    _lastRows = items;
     for(const rec of items){
       const c=rec.csv;
-      const tr=document.createElement('tr'); tr.tabIndex=0; tr.dataset.sci=c.sciName;
+      const key = c.dyntaxa || normalizeSciName(c.sciName);
+      const tr=document.createElement('tr'); tr.tabIndex=0; tr.dataset.sci=c.sciName; tr.dataset.key=key;
       tr.innerHTML =
         `<td>${escapeHTML(c.svName||'')}</td>`+
         `<td><i>${escapeHTML(c.sciName||'')}</i></td>`+
-        `<td>${c.biodiv??'–'}</td>`+
-        `<td>${c.nectar??'–'}</td>`+
-        `<td>${rec.count}</td>`+
+        `<td class="num">${c.biodiv??'–'}</td>`+
+        `<td class="num">${c.nectar??'–'}</td>`+
+        `<td class="num">${rec.count}</td>`+
         `<td><span class="tag">${escapeHTML(c.growth||'')}</span></td>`+
-        `<td>${c.height==null? '–' : c.height.toFixed(2)}</td>`+
+        `<td class="num">${c.height==null? '–' : c.height.toFixed(2)}</td>`+
         `<td>${escapeHTML(c.light||'')}</td>`+
         `<td>${escapeHTML(c.moist||'')}</td>`+
-        `<td>${escapeHTML(c.salt||'')}</td>`;
-      tr.addEventListener('click',()=> selectSpecies(c.sciName));
-      tr.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); selectSpecies(c.sciName);} });
+        `<td>${escapeHTML(c.salt||'')}</td>`+
+        // plats för 9 metric-celler
+        `<td class="num">–</td><td class="num">–</td><td class="num">–</td>`+
+        `<td class="num">–</td><td class="num">–</td>`+
+        `<td class="num">–</td><td class="num">–</td>`+
+        `<td class="num">–</td><td class="num">–</td>`;
+      tr.addEventListener('click',()=> selectSpecies(key));
+      tr.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); selectSpecies(key);} });
       tb.appendChild(tr);
     }
     makeSortable();
-    window._lastRows = items;
+    updateMetricsCells(); // ifall metrics redan finns
   }
 
   function plotAllPoints(items){
@@ -555,22 +531,45 @@
     if(markers.length) map.fitBounds(L.featureGroup(markers).getBounds().pad(0.2));
   }
 
-  function selectSpecies(sci){
-    document.querySelectorAll('#resultTable tbody tr').forEach(tr=> tr.classList.toggle('selected', tr.dataset.sci===sci));
-    const rec=(window._lastRows||[]).find(r=> (r.csv.sciName||'')===sci); if(!rec) return;
+  function selectSpecies(key){
+    document.querySelectorAll('#resultTable tbody tr').forEach(tr=> tr.classList.toggle('selected', tr.dataset.key===key));
+    const rec=(_lastRows||[]).find(r=>{
+      const k = r.csv.dyntaxa || normalizeSciName(r.csv.sciName);
+      return k===key;
+    });
+    if(!rec) return;
+    // markera punkter
     layerSelected.clearLayers(); layerLinks.clearLayers();
     const pts=[];
     for(const f of rec.feats){
       const g=f.geometry; if(!g||g.type!=='Point') continue;
       const [lon,lat]=g.coordinates;
       const m=L.circleMarker([lat,lon],{radius:6,color:'#FFD700',weight:2,fillColor:'#FFD700',fillOpacity:.6});
-      m.addTo(layerSelected); pts.push(m);
+      m.addTo(layerSelected); pts.push([lat,lon]);
     }
-    if(pts.length) map.fitBounds(L.featureGroup(pts).getBounds().pad(0.2));
+    if(pts.length) map.fitBounds(L.featureGroup(layerSelected.getLayers()).getBounds().pad(0.2));
 
-    window._lastSelectedSpeciesFeats = rec.feats;
-    document.getElementById('connPanel').style.display = 'block';
-    analyzeConnectivityForSpecies(rec.feats);
+    // rita nätverk baserat på nuvarande spridningsradie
+    const thresh = +$('#connRadius').value || 1000;
+    // före (blå kanter)
+    const Gbefore = buildGraph(pts, thresh);
+    const degC_before = degreeCentrality(Gbefore.deg, Gbefore.n);
+    drawEdgesWithDegreeStyling(pts, Gbefore.edges, degC_before, '#3aa0ff');
+
+    // efter (ny punkt guld)
+    if(selectedPoint){
+      const withNew = pts.concat([[selectedPoint.lat, selectedPoint.lng]]);
+      const Gafter = buildGraph(withNew, thresh);
+      const degC_after = degreeCentrality(Gafter.deg, Gafter.n);
+      const newIdx = withNew.length-1;
+      for(const nb of Gafter.adj[newIdx]){
+        const avg = (degC_after[newIdx] + degC_after[nb]) / 2;
+        const weight = 1.0 + 4.0 * avg;
+        const opacity = 0.35 + 0.6 * avg;
+        L.polyline([[withNew[newIdx][0],withNew[newIdx][1]],[withNew[nb][0],withNew[nb][1]]],
+          {color:'#FFD700', weight, opacity}).addTo(layerLinks);
+      }
+    }
   }
 
   function makeSortable(){
