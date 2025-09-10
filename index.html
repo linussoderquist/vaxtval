@@ -110,9 +110,10 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-  const SOS_API_KEY = "946a74eee3384494b1905c06ad4420b0";
+  /* ================= CONFIG ================= */
+  const SOS_API_KEY = "946a74eee3384494b1905c06ad4420b0"; // lägg din nyckel här
 
-  // === Hjälpare ===
+  /* ================ Hjälpare ================ */
   const $ = s => document.querySelector(s);
   const statusEl = $('#statusMsg');
   const setStatus = t => statusEl.textContent = t || '';
@@ -157,7 +158,7 @@
     return rows.filter(r=> r.some(v=> String(v).trim().length>0));
   }
 
-  // === Data från CSV ===
+  /* ============== Data från CSV ============== */
   const speciesCsvById = new Map();   // Dyntaxa-ID -> CSV-record
   const speciesByNorm  = new Map();   // normaliserat vetenskapligt namn -> CSV-record
   let csvLoaded = false;
@@ -221,13 +222,15 @@
     try{ const txt=await f.text(); await indexCsvText(txt); setStatus('CSV klar.'); }catch(err){ setStatus('CSV-fel: '+err.message); }
   });
 
-  // === Karta ===
+  /* ================== Karta ================== */
   const map = L.map('map').setView([62,15],5);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
   let selectedPoint=null, clickMarker=null, bufferCircle=null;
   const layerAll = L.layerGroup().addTo(map);
   const layerSelected = L.layerGroup().addTo(map);
   const layerLinks = L.layerGroup().addTo(map);   // nätverks-länkar
+  const EDGE_EXISTING_STYLE = { color:'#3aa0ff', weight:1, opacity:0.6 };  // befintliga-befintliga
+  const EDGE_NEW_STYLE      = { color:'#FFD700', weight:2, opacity:0.9 };  // ny punkt -> befintlig
 
   map.on('click', e=>{
     selectedPoint = e.latlng;
@@ -244,7 +247,7 @@
     bufferCircle = L.circle(selectedPoint, {radius:r, color:'#77f', fillOpacity:0.05}).addTo(map);
   }
 
-  // === SOS Export ===
+  /* ================ SOS Export ================ */
   function circlePolygon(lon, lat, radiusMeters, steps=96){
     const R=6371000, coords=[];
     for(let i=0;i<=steps;i++){
@@ -280,7 +283,7 @@
     return Array.isArray(gj?.features)? gj.features : [];
   }
 
-  // === Analys ===
+  /* ================== Analys ================== */
   $('#analyzeBtn').addEventListener('click', async ()=>{
     if(!selectedPoint){ setStatus('Välj en plats i kartan.'); return; }
     const r = +$('#radiusInput').value || 0; if(r<=0){ setStatus('Ange radie > 0.'); return; }
@@ -322,7 +325,7 @@
     }catch(err){ console.error(err); setStatus('Fel: '+err.message); hideProgress(); }
   });
 
-  // === Nätverksanalys-hjälpare ===
+  // Nätverks-hjälpare
   function haversineMeters(lat1, lon1, lat2, lon2){
     const R=6371000;
     const dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
@@ -351,30 +354,43 @@
   }
 
   function analyzeConnectivityForSpecies(speciesFeats){
-    const pts = [];
-    for(const f of speciesFeats){
-      const g=f.geometry; if(!g || g.type!=='Point') continue;
-      const [lon,lat] = g.coordinates;
-      pts.push([lat,lon]);
+    const pts = [];      // [[lat,lon], ...]
+    const ptCoords = []; // samma format för ritning
+
+    for (const f of speciesFeats){
+      const g = f.geometry; if (!g || g.type !== 'Point') continue;
+      const [lon, lat] = g.coordinates;
+      pts.push([lat, lon]);
+      ptCoords.push([lat, lon]);
     }
-    if(!pts.length){ setStatus('Inga punktdata för arten.'); return; }
-    if(!selectedPoint){ setStatus('Välj en plats i kartan först.'); return; }
+    if (!pts.length){ setStatus('Inga punktdata för arten.'); return; }
+    if (!selectedPoint){ setStatus('Välj en plats i kartan först.'); return; }
 
     const thresh = +document.getElementById('connRadius').value || 1000;
 
     // Före/efter
     const before = componentsFor(pts, thresh);
     const withNew = pts.concat([[selectedPoint.lat, selectedPoint.lng]]);
-    const after = componentsFor(withNew, thresh);
+    const after  = componentsFor(withNew, thresh);
 
-    // Direkta länkar från ny punkt
-    let links=0; layerLinks.clearLayers();
-    for(const [lat,lon] of pts){
+    // Rensa & rita alla kanter mellan befintliga obs
+    layerLinks.clearLayers();
+    for (let i=0; i<pts.length; i++){
+      for (let j=i+1; j<pts.length; j++){
+        const d = haversineMeters(pts[i][0], pts[i][1], pts[j][0], pts[j][1]);
+        if (d <= thresh){
+          L.polyline([ ptCoords[i], ptCoords[j] ], EDGE_EXISTING_STYLE).addTo(layerLinks);
+        }
+      }
+    }
+
+    // Rita länkar från den nya punkten till obs inom radien
+    let links = 0;
+    for (const [lat, lon] of pts){
       const d = haversineMeters(selectedPoint.lat, selectedPoint.lng, lat, lon);
-      if(d<=thresh){
+      if (d <= thresh){
         links++;
-        L.polyline([[selectedPoint.lat,selectedPoint.lng],[lat,lon]],
-          {color:'#FFD700',weight:2,opacity:0.9}).addTo(layerLinks);
+        L.polyline([[selectedPoint.lat, selectedPoint.lng], [lat, lon]], EDGE_NEW_STYLE).addTo(layerLinks);
       }
     }
 
@@ -397,7 +413,7 @@
     analyzeConnectivityForSpecies(window._lastSelectedSpeciesFeats);
   });
 
-  // === Tabell & karta ===
+  /* ========= Tabell & karta (UI) ========= */
   function renderTable(items){
     const tb=$('#resultTable tbody'); tb.innerHTML='';
     for(const rec of items){
@@ -449,7 +465,7 @@
     }
     if(pts.length) map.fitBounds(L.featureGroup(pts).getBounds().pad(0.2));
 
-    // spara feats och analysera direkt
+    // spara feats och kör analys direkt
     window._lastSelectedSpeciesFeats = rec.feats;
     document.getElementById('connPanel').style.display = 'block';
     analyzeConnectivityForSpecies(rec.feats);
