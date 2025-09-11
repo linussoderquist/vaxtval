@@ -92,13 +92,9 @@
           <th>Fukt</th>
           <th>Salt</th>
           <!-- Nya konnektivitetskolumner (per art) -->
-          <th class="tight" title="Komponenter före">Comp F</th>
-          <th class="tight" title="Komponenter efter">Comp E</th>
-          <th class="tight" title="Minskning av komponenter">ΔComp</th>
-          <th class="tight" title="Giant Component Fraction före">GCF F</th>
-          <th class="tight" title="Giant Component Fraction efter">GCF E</th>
-          <th class="tight" title="Fragmentering 1−Σs²/n² före">Frag F</th>
-          <th class="tight" title="Fragmentering 1−Σs²/n² efter">Frag E</th>
+          <th class="tight" title="Förändring i antal komponenter (Efter − Före)">ΔComp</th>
+          <th class="tight" title="ΔGCF = GCF Efter − GCF Före">ΔGCF</th>
+          <th class="tight" title="ΔFrag = Frag Efter − Frag Före">ΔFrag</th>
           <th class="tight" title="Direkta länkar från ny punkt">Links</th>
           <th class="tight" title="Betweenness centrality (ny punkt)">BC(new)</th>
         </tr>
@@ -220,7 +216,8 @@
     csvLoaded = true;
   }
 
-  $('#csvInput').addEventListener('change', async e=>{
+  $('#csvInput').alddEventListener?.('change', async e=>{}); // guard if redefined later
+  document.getElementById('csvInput').addEventListener('change', async e=>{
     const f=e.target.files?.[0]; if(!f) return;
     try{ const txt=await f.text(); await indexCsvText(txt); setStatus('CSV klar.'); }catch(err){ setStatus('CSV-fel: '+err.message); }
   });
@@ -372,7 +369,7 @@
   }
 
   /* ========== App-state ========== */
-  let _featuresBySpecies = []; // [{csv, feats, count, score}, ...] efter Hämta
+  let _featuresBySpecies = []; // [{csv, feats, count, score}, ...]
   let _lastRows = [];
   let _speciesMetrics = new Map(); // key -> metrics
 
@@ -412,7 +409,7 @@
                   .sort((a,b)=>{const s=(b.score??0)-(a.score??0); if(s) return s; return (b.count??0)-(a.count??0);});
 
       _featuresBySpecies = rows;
-      _speciesMetrics.clear(); // reset metrics (kräver ny Analys)
+      _speciesMetrics.clear(); // reset metrics
       renderTable(rows);
       plotAllPoints(rows);
       setStatus(rows.length? '' : 'Inga arter matchade CSV inom vald radie.');
@@ -426,7 +423,6 @@
     if(!selectedPoint){ setStatus('Klicka i kartan för att välja plats.'); return; }
     const thresh = +$('#connRadius').value || 1000;
 
-    // Beräkna per art och uppdatera celler
     for(const rec of _featuresBySpecies){
       const key = rec.csv.dyntaxa || normalizeSciName(rec.csv.sciName);
       const feats = rec.feats;
@@ -442,7 +438,7 @@
       const withNew = pts.concat([[selectedPoint.lat, selectedPoint.lng]]);
       const after  = componentsFor(withNew, thresh);
 
-      // Bygg graf för betweenness + links (efter)
+      // Graf efter -> betweenness + länkantal
       const Gafter = buildGraph(withNew, thresh);
       const BC = brandesBetweenness(Gafter.adj);
       const newIdx = withNew.length-1;
@@ -450,14 +446,13 @@
       const links = (Gafter.adj[newIdx]||[]).length;
 
       const metrics = {
-        compF: before.compCount, compE: after.compCount, dComp: before.compCount - after.compCount,
-        gcfF: before.gcf, gcfE: after.gcf,
-        fragF: before.frag, fragE: after.frag,
+        dComp:  after.compCount - before.compCount,
+        dGcf:   after.gcf - before.gcf,
+        dFrag:  after.frag - before.frag,
         links, bcNew
       };
       _speciesMetrics.set(key, metrics);
     }
-    // uppdatera tabellceller
     updateMetricsCells();
     setStatus('Konnektivitetsmått uppdaterade.');
   });
@@ -470,17 +465,13 @@
       const cells = tr.querySelectorAll('td');
       const baseCols = 10; // fasta kolumner före mått
       if(m){
-        cells[baseCols+0].textContent = m.compF;
-        cells[baseCols+1].textContent = m.compE;
-        cells[baseCols+2].textContent = m.dComp;
-        cells[baseCols+3].textContent = fmt2(m.gcfF);
-        cells[baseCols+4].textContent = fmt2(m.gcfE);
-        cells[baseCols+5].textContent = fmt2(m.fragF);
-        cells[baseCols+6].textContent = fmt2(m.fragE);
-        cells[baseCols+7].textContent = m.links;
-        cells[baseCols+8].textContent = fmt3(m.bcNew);
+        cells[baseCols+0].textContent = m.dComp;
+        cells[baseCols+1].textContent = fmt2(m.dGcf);
+        cells[baseCols+2].textContent = fmt2(m.dFrag);
+        cells[baseCols+3].textContent = m.links;
+        cells[baseCols+4].textContent = fmt3(m.bcNew);
       }else{
-        for(let i=0;i<9;i++) cells[baseCols+i].textContent = '–';
+        for(let i=0;i<5;i++) cells[baseCols+i].textContent = '–';
       }
     }
   }
@@ -504,11 +495,12 @@
         `<td>${escapeHTML(c.light||'')}</td>`+
         `<td>${escapeHTML(c.moist||'')}</td>`+
         `<td>${escapeHTML(c.salt||'')}</td>`+
-        // plats för 9 metric-celler
-        `<td class="num">–</td><td class="num">–</td><td class="num">–</td>`+
-        `<td class="num">–</td><td class="num">–</td>`+
-        `<td class="num">–</td><td class="num">–</td>`+
-        `<td class="num">–</td><td class="num">–</td>`;
+        // plats för 5 metric-celler
+        `<td class="num">–</td>`+   /* ΔComp */
+        `<td class="num">–</td>`+   /* ΔGCF  */
+        `<td class="num">–</td>`+   /* ΔFrag */
+        `<td class="num">–</td>`+   /* Links */
+        `<td class="num">–</td>`;   /* BC(new) */
       tr.addEventListener('click',()=> selectSpecies(key));
       tr.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); selectSpecies(key);} });
       tb.appendChild(tr);
